@@ -15,6 +15,8 @@ export const COLOR = {
   textoSuave: colors.textSecondary ?? '#64748B',
   borde: colors.border ?? '#E2E8F0',
   error: colors.danger ?? colors.error ?? '#DC2626',
+  advertencia: colors.warning ?? '#B45309',
+  fondoAdvertencia: colors.warningBackground ?? '#FEF3C7',
 };
 
 export const ESPACIO = {

@@ -1,16 +1,18 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
+import { formatear } from '../utils/formato';
 import { COLOR, ESPACIO, RADIO } from '../utils/temaAreaCurva';
 
-// 6.48 -> "6,4800"
-export const formatear = (valor) => valor.toFixed(4).replace('.', ',');
-
-export default function ResultadoSuma({ titulo, valor, detalle, destacado = false }) {
+// diferencia: (valor − referencia), opcional. Sirve para comparar cada suma con Simpson.
+export default function ResultadoSuma({ titulo, valor, detalle, diferencia, destacado = false }) {
   return (
     <View style={[styles.tarjeta, destacado && styles.destacada]}>
       <View style={styles.textos}>
         <Text style={styles.titulo}>{titulo}</Text>
         {detalle ? <Text style={styles.detalle}>{detalle}</Text> : null}
+        {diferencia !== undefined ? (
+          <Text style={styles.detalle}>Diferencia con la referencia: {formatear(diferencia)}</Text>
+        ) : null}
       </View>
       <Text style={[styles.valor, destacado && { color: COLOR.primario }]}>{formatear(valor)}</Text>
     </View>

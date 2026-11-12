@@ -1,209 +1,306 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import {
-  Pressable,
-  ScrollView,
-  StyleSheet,
+  View,
   Text,
   TextInput,
-  useWindowDimensions,
-  View,
+  ScrollView,
+  TouchableOpacity,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import useAreaBajoCurva from '../hooks/useAreaBajoCurva';
+import TecladoMatematico from '../components/TecladoMatematico';
 import GraficaRectangulos from '../components/GraficaRectangulos';
 import ResultadoSuma from '../components/ResultadoSuma';
-import useAreaBajoCurva from '../hooks/useAreaBajoCurva';
-import { FUNCIONES, N_MAX, N_RIEMANN } from '../utils/areaBajoCurva';
+import { EJEMPLOS } from '../data/ejemplosAreaCurva';
 import { COLOR, ESPACIO, RADIO } from '../utils/temaAreaCurva';
 
-const MODOS = [
-  { id: 'inferior', etiqueta: 'Inferior' },
-  { id: 'superior', etiqueta: 'Superior' },
-  { id: 'medio', etiqueta: 'Punto medio' },
+const FUNCIONES_CON_PARENTESIS = [
+  'sin', 'cos', 'tan', 'cot', 'sec', 'csc', 'ln', 'log', 'sqrt', 'exp', 'abs'
 ];
 
-// Botón tipo "chip" reutilizable dentro de esta pantalla
-function Chip({ texto, activo, onPress }) {
-  return (
-    <Pressable onPress={onPress} style={[styles.chip, activo && styles.chipActivo]}>
-      <Text style={[styles.chipTexto, activo && styles.chipTextoActivo]}>{texto}</Text>
-    </Pressable>
-  );
-}
-
 export default function AreaCurvaScreen() {
-  const { funcion, setFuncionId, a, setA, b, setB, n, setN, resultados, error } =
-    useAreaBajoCurva();
-  const [modo, setModo] = useState('inferior');
-  const { width } = useWindowDimensions();
-  const anchoGrafica = width - ESPACIO.m * 2 - 4;
+  const {
+    borrador,
+    cambiarCampo,
+    calcular,
+    usarEjemplo,
+    calculando,
+    hayCambiosSinCalcular,
+    errores,
+    advertencias,
+    resultados,
+  } = useAreaBajoCurva();
+
+  const [inputActivo, setInputActivo] = useState(null);
+  const [seleccion, setSeleccion] = useState({ start: 0, end: 0 });
+
+  const refFuncion = useRef(null);
+  const refA = useRef(null);
+  const refB = useRef(null);
+  const refN = useRef(null);
+
+  const obtenerConfig = (key) => {
+    switch (key) {
+      case 'funcion':
+        return { valor: borrador.funcion, ref: refFuncion, campo: 'funcion' };
+      case 'a':
+        return { valor: borrador.a, ref: refA, campo: 'a' };
+      case 'b':
+        return { valor: borrador.b, ref: refB, campo: 'b' };
+      case 'n':
+        return { valor: borrador.n, ref: refN, campo: 'n' };
+      default:
+        return null;
+    }
+  };
+
+  const insertarTexto = useCallback((tecla) => {
+    if (!inputActivo) return;
+    const config = obtenerConfig(inputActivo);
+    if (!config) return;
+
+    const { valor: valorActual, ref: refInput, campo } = config;
+
+    // 1. MANEJO DE BORRAR (El símbolo que envía el teclado es '⌫')
+    if (tecla === '⌫') {
+      let nuevoValor;
+      let nuevaPos;
+      if (seleccion.start !== seleccion.end) {
+        nuevoValor = valorActual.slice(0, seleccion.start) + valorActual.slice(seleccion.end);
+        nuevaPos = seleccion.start;
+      } else if (seleccion.start > 0) {
+        nuevoValor = valorActual.slice(0, seleccion.start - 1) + valorActual.slice(seleccion.start);
+        nuevaPos = seleccion.start - 1;
+      } else {
+        return;
+      }
+      cambiarCampo(campo, nuevoValor);
+      setSeleccion({ start: nuevaPos, end: nuevaPos });
+      return;
+    }
+
+    // 2. MANEJO DE LIMPIAR TODO (El símbolo es 'C')
+    if (tecla === 'C') {
+      cambiarCampo(campo, '');
+      setSeleccion({ start: 0, end: 0 });
+      return;
+    }
+
+    // 3. INSERCIÓN DE TEXTO NORMAL
+    const MAPEO_SIMBOLOS = {
+      '×': '*',
+      '÷': '/',
+      '−': '-',
+      ',': '.',
+      'π': 'pi',
+      '√': 'sqrt',
+    };
+
+    let textoInsertar = MAPEO_SIMBOLOS[tecla] || tecla;
+
+    if (FUNCIONES_CON_PARENTESIS.includes(tecla)) {
+      textoInsertar = tecla + '(';
+    }
+
+    const textoAntes = valorActual.slice(0, seleccion.start);
+    const textoDespues = valorActual.slice(seleccion.end);
+    const nuevoValor = textoAntes + textoInsertar + textoDespues;
+
+    cambiarCampo(campo, nuevoValor);
+
+    const nuevaPosicion = seleccion.start + textoInsertar.length;
+    setSeleccion({ start: nuevaPosicion, end: nuevaPosicion });
+
+    if (refInput.current) refInput.current.focus();
+  }, [inputActivo, borrador, seleccion, cambiarCampo]);
+
+  const manejarFoco = (input) => {
+    setInputActivo(input);
+    const config = obtenerConfig(input);
+    if (config) {
+      const len = config.valor.length;
+      setSeleccion({ start: len, end: len });
+    }
+  };
+
+  const manejarSeleccion = (event, input) => {
+    if (input === inputActivo) {
+      setSeleccion(event.nativeEvent.selection);
+    }
+  };
+
+  const renderInput = (label, campo, ref, keyboardType = 'default', placeholder = '') => {
+    const valor = borrador[campo];
+    return (
+      <View style={styles.inputContainer}>
+        <Text style={styles.label}>{label}</Text>
+        <TextInput
+          ref={ref}
+          style={[styles.input, inputActivo === campo && styles.inputActivo]}
+          value={valor}
+          onChangeText={(texto) => cambiarCampo(campo, texto)}
+          onFocus={() => manejarFoco(campo)}
+          onSelectionChange={(e) => manejarSeleccion(e, campo)}
+          showSoftInputOnFocus={campo === 'n'} // Solo n usa teclado nativo
+          keyboardType={keyboardType}
+          placeholder={placeholder}
+          autoCapitalize="none"
+          autoCorrect={false}
+          selection={inputActivo === campo ? seleccion : undefined}
+        />
+      </View>
+    );
+  };
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
-      <ScrollView contentContainerStyle={styles.contenido} keyboardShouldPersistTaps="handled">
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+    >
+      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         <Text style={styles.titulo}>Área bajo la curva</Text>
-        <Text style={styles.subtitulo}>Aproximación por rectángulos de ancho fijo</Text>
+        <Text style={styles.subtitulo}>Aproximación por rectángulos y Suma de Riemann</Text>
 
-        <Text style={styles.etiqueta}>Función</Text>
-        <View style={styles.fila}>
-          {FUNCIONES.map((item) => (
-            <Chip
-              key={item.id}
-              texto={item.etiqueta}
-              activo={item.id === funcion.id}
-              onPress={() => setFuncionId(item.id)}
-            />
+        {/* Chips de ejemplos */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.ejemplosScroll}>
+          {EJEMPLOS.map((ej) => (
+            <TouchableOpacity
+              key={ej.id}
+              style={styles.chip}
+              onPress={() => usarEjemplo(ej)}
+            >
+              <Text style={styles.chipTexto}>{ej.etiqueta}</Text>
+            </TouchableOpacity>
           ))}
-        </View>
+        </ScrollView>
 
-        <Text style={styles.etiqueta}>Intervalo [a, b]</Text>
-        <View style={styles.fila}>
-          <TextInput
-            style={styles.input}
-            value={a}
-            onChangeText={setA}
-            keyboardType="numeric"
-            placeholder="a"
-            accessibilityLabel="Límite inferior a"
-          />
-          <TextInput
-            style={styles.input}
-            value={b}
-            onChangeText={setB}
-            keyboardType="numeric"
-            placeholder="b"
-            accessibilityLabel="Límite superior b"
-          />
+        {/* Inputs */}
+        {renderInput('Función f(x)', 'funcion', refFuncion, 'default', 'Ej: -x^2 + 5')}
+        <View style={styles.filaInputs}>
+          {renderInput('Límite inferior (a)', 'a', refA, 'default', '0')}
+          {renderInput('Límite superior (b)', 'b', refB, 'default', '2')}
         </View>
+        {renderInput('Número de rectángulos (n)', 'n', refN, 'numeric', '5')}
 
-        <Text style={styles.etiqueta}>Número de rectángulos (n)</Text>
-        <View style={styles.stepper}>
-          <Pressable style={styles.botonN} onPress={() => setN(n - 1)}>
-            <Text style={styles.botonNTexto}>−</Text>
-          </Pressable>
-          <Text style={styles.valorN}>{n}</Text>
-          <Pressable style={styles.botonN} onPress={() => setN(n + 1)}>
-            <Text style={styles.botonNTexto}>+</Text>
-          </Pressable>
-          <Pressable style={styles.botonN} onPress={() => setN(n + 10)}>
-            <Text style={styles.botonNTexto}>+10</Text>
-          </Pressable>
-        </View>
-        <Text style={styles.ayuda}>Máximo {N_MAX}. Más rectángulos = mejor aproximación.</Text>
+        {/* Botón Calcular */}
+        <TouchableOpacity
+          style={[styles.botonCalcular, (!hayCambiosSinCalcular || calculando) && styles.botonDeshabilitado]}
+          onPress={calcular}
+          disabled={!hayCambiosSinCalcular || calculando}
+        >
+          <Text style={styles.botonTexto}>
+            {calculando ? 'Calculando…' : hayCambiosSinCalcular ? 'Calcular' : 'Resultados actualizados'}
+          </Text>
+        </TouchableOpacity>
 
-        {error ? (
-          <Text style={styles.error}>{error}</Text>
-        ) : (
+        {/* Errores y advertencias */}
+        {errores && Object.keys(errores).length > 0 && (
+          <View style={styles.errorBox}>
+            {Object.entries(errores).map(([campo, msg]) => (
+              <Text key={campo} style={styles.errorTexto}>• {msg}</Text>
+            ))}
+          </View>
+        )}
+        {advertencias && advertencias.length > 0 && (
+          <View style={styles.advertenciaBox}>
+            {advertencias.map((msg, i) => (
+              <Text key={i} style={styles.advertenciaTexto}>• {msg}</Text>
+            ))}
+          </View>
+        )}
+
+        {/* Resultados y gráfica */}
+        {resultados && !resultados.intervaloNulo && (
           <>
-            <Text style={styles.etiqueta}>Gráfica</Text>
-            <View style={styles.fila}>
-              {MODOS.map((item) => (
-                <Chip
-                  key={item.id}
-                  texto={item.etiqueta}
-                  activo={item.id === modo}
-                  onPress={() => setModo(item.id)}
-                />
-              ))}
-            </View>
-            <View style={styles.grafica}>
-              <GraficaRectangulos
-                f={funcion.f}
-                a={resultados.a}
-                b={resultados.b}
-                n={n}
-                modo={modo}
-                anchoGrafica={anchoGrafica}
-              />
+            <View style={styles.resultadosContainer}>
+              <ResultadoSuma titulo="Suma Inferior" valor={resultados.inferior} />
+              <ResultadoSuma titulo="Suma Superior" valor={resultados.superior} />
+              <ResultadoSuma titulo="Suma Intermedia" valor={resultados.intermedia} />
+              <ResultadoSuma titulo="Punto Medio" valor={resultados.puntoMedio} />
+              <ResultadoSuma titulo="Riemann (n grande)" valor={resultados.riemann} />
+              <ResultadoSuma titulo="Valor de referencia (Simpson)" valor={resultados.referencia} destacado />
             </View>
 
-            <Text style={styles.etiqueta}>Resultados</Text>
-            <ResultadoSuma
-              titulo="Suma inferior"
-              detalle="Rectángulos por debajo de la curva"
-              valor={resultados.inferior}
-            />
-            <ResultadoSuma
-              titulo="Suma superior"
-              detalle="Rectángulos por encima de la curva"
-              valor={resultados.superior}
-            />
-            <ResultadoSuma
-              titulo="Suma intermedia"
-              detalle="(Inferior + Superior) / 2"
-              valor={resultados.intermedia}
-            />
-            <ResultadoSuma
-              titulo="Punto medio"
-              detalle="f evaluada en el centro de cada rectángulo"
-              valor={resultados.puntoMedio}
-            />
-            <ResultadoSuma
-              titulo="Suma de Riemann"
-              detalle={`Aproximación con n = ${N_RIEMANN.toLocaleString('es-CO')}`}
-              valor={resultados.riemann}
-            />
-            <ResultadoSuma
-              titulo="Área exacta (integral)"
-              detalle="F(b) − F(a)"
-              valor={resultados.exacto}
-              destacado
+            <GraficaRectangulos
+              f={resultados.f}
+              a={resultados.a}
+              b={resultados.b}
+              n={resultados.n}
+              modo="inferior"
+              minY={resultados.minY}
+              maxY={resultados.maxY}
+              anchoGrafica={300}
             />
           </>
         )}
+        {resultados && resultados.intervaloNulo && (
+          <Text style={styles.advertenciaTexto}>
+            El intervalo mide 0: el área es 0.
+          </Text>
+        )}
       </ScrollView>
-    </SafeAreaView>
+
+      {inputActivo && inputActivo !== 'n' && (
+        <TecladoMatematico onTeclaPresionada={insertarTexto} />
+      )}
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLOR.fondo },
-  contenido: { padding: ESPACIO.m, paddingBottom: ESPACIO.l * 2 },
-  titulo: { fontSize: 24, fontWeight: '700', color: COLOR.texto },
-  subtitulo: { fontSize: 14, color: COLOR.textoSuave, marginBottom: ESPACIO.s },
-  etiqueta: {
-    fontSize: 14,
-    fontWeight: '600',
+  container: { flex: 1, backgroundColor: COLOR.fondo },
+  scrollContent: { padding: ESPACIO.m, paddingBottom: 220 },
+  titulo: { fontSize: 24, fontWeight: 'bold', color: COLOR.texto, marginBottom: 4 },
+  subtitulo: { fontSize: 14, color: COLOR.textoSuave, marginBottom: ESPACIO.m },
+  ejemplosScroll: { marginBottom: ESPACIO.m },
+  chip: {
+    backgroundColor: COLOR.superficie,
+    borderWidth: 1,
+    borderColor: COLOR.borde,
+    borderRadius: RADIO.m,
+    paddingVertical: ESPACIO.s,
+    paddingHorizontal: ESPACIO.m,
+    marginRight: ESPACIO.s,
+  },
+  chipTexto: { fontSize: 13, color: COLOR.primario, fontWeight: '600' },
+  inputContainer: { marginBottom: ESPACIO.s, flex: 1 },
+  filaInputs: { flexDirection: 'row', gap: ESPACIO.s },
+  label: { fontSize: 14, fontWeight: '600', color: COLOR.texto, marginBottom: 4 },
+  input: {
+    borderWidth: 1,
+    borderColor: COLOR.borde,
+    borderRadius: RADIO.m,
+    padding: ESPACIO.s,
+    fontSize: 16,
+    backgroundColor: COLOR.superficie,
     color: COLOR.texto,
-    marginTop: ESPACIO.m,
+  },
+  inputActivo: { borderColor: COLOR.primario, borderWidth: 2 },
+  botonCalcular: {
+    backgroundColor: COLOR.primario,
+    borderRadius: RADIO.m,
+    padding: ESPACIO.m,
+    alignItems: 'center',
+    marginVertical: ESPACIO.m,
+  },
+  botonDeshabilitado: { backgroundColor: COLOR.textoSuave },
+  botonTexto: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+  errorBox: {
+    backgroundColor: '#FEE2E2',
+    borderRadius: RADIO.m,
+    padding: ESPACIO.s,
     marginBottom: ESPACIO.s,
   },
-  fila: { flexDirection: 'row', flexWrap: 'wrap', gap: ESPACIO.s },
-  chip: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: COLOR.borde,
-    backgroundColor: COLOR.superficie,
-  },
-  chipActivo: { backgroundColor: COLOR.primario, borderColor: COLOR.primario },
-  chipTexto: { color: COLOR.texto, fontSize: 14 },
-  chipTextoActivo: { color: '#FFFFFF', fontWeight: '600' },
-  input: {
-    flex: 1,
-    minWidth: 100,
-    borderWidth: 1,
-    borderColor: COLOR.borde,
+  errorTexto: { color: COLOR.error, fontSize: 13, fontWeight: '500' },
+  advertenciaBox: {
+    backgroundColor: COLOR.fondoAdvertencia,
     borderRadius: RADIO.m,
-    backgroundColor: COLOR.superficie,
-    paddingHorizontal: ESPACIO.m,
-    paddingVertical: 10,
-    fontSize: 16,
-    color: COLOR.texto,
+    padding: ESPACIO.s,
+    marginBottom: ESPACIO.s,
   },
-  stepper: { flexDirection: 'row', alignItems: 'center', gap: ESPACIO.m },
-  botonN: {
-    minWidth: 44,
-    height: 44,
-    paddingHorizontal: 10,
-    borderRadius: RADIO.m,
-    backgroundColor: COLOR.primario,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  botonNTexto: { color: '#FFFFFF', fontSize: 18, fontWeight: '700' },
-  valorN: { fontSize: 20, fontWeight: '700', color: COLOR.texto, minWidth: 40, textAlign: 'center' },
-  ayuda: { fontSize: 12, color: COLOR.textoSuave, marginTop: 6 },
-  error: { color: COLOR.error, marginTop: ESPACIO.m, fontSize: 14 },
-  grafica: { alignItems: 'center', paddingVertical: ESPACIO.s },
+  advertenciaTexto: { color: COLOR.advertencia, fontSize: 13, fontWeight: '500' },
+  resultadosContainer: { marginTop: ESPACIO.m },
 });
